@@ -1,0 +1,13 @@
+bin/
+*.exe
+*.test
+*.out
+
+*.zip
+*.tar
+*.gz
+
+.idea/
+.vscode/
+*.swp
+.DS_Store

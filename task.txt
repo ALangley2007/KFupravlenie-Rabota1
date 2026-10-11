@@ -1,0 +1,139 @@
+================================================================================
+TASK SPECIFICATION: OS SHELL EMULATOR
+================================================================================
+
+Develop an emulator for an OS shell language. The emulator's behavior must be
+as close as possible to working in the command line of a UNIX-like OS.
+
+--------------------------------------------------------------------------------
+Stage 1. REPL
+--------------------------------------------------------------------------------
+Goal:
+Create a minimal prototype. Most functions in it are currently stubs, but 
+interactive user dialogue is already supported.
+
+Requirements:
+1. The application must be implemented as a command-line interface (CLI).
+2. The input prompt must be generated based on real OS data of the host machine 
+   running the emulator. Example: username@hostname:~$.
+3. Implement a parser that correctly handles quoted arguments.
+4. Implement stub commands that output their name and arguments: ls, cd.
+5. Implement the exit command.
+6. Demonstrate the prototype in interactive mode. Provide examples of all 
+   implemented functionality, including error handling.
+7. Save the result of this stage to the repository with a standard formatted 
+   commit.
+
+--------------------------------------------------------------------------------
+Stage 2. Configuration
+--------------------------------------------------------------------------------
+Goal:
+Make the emulator configurable by supporting user parameter inputs to the 
+application. Implement debug output of all specified parameters when launching 
+the emulator for this stage.
+
+Requirements:
+1. Command-line parameters:
+   - Path to the physical location of the VFS.
+   - Path to the startup script.
+2. Startup script for executing emulator commands: supports comments (use the 
+   comment syntax of your implementation language). When executing the script, 
+   both input and output must be displayed on the screen, simulating a user dialogue.
+3. Report an error if an error occurs during the execution of the startup script.
+4. Create several scripts for the host OS running the emulator. Include emulator 
+   invocations in each script to test all supported command-line parameters.
+5. Save the result of this stage to the repository with a standard formatted 
+   commit.
+
+--------------------------------------------------------------------------------
+Stage 3. VFS (Virtual File System)
+--------------------------------------------------------------------------------
+Goal:
+Connect a virtual file system (VFS).
+
+Requirements:
+1. All operations must be performed in memory. Unpacking or otherwise modifying 
+   the VFS data on the physical disk is forbidden, except for possible utility 
+   commands.
+2. The source of the VFS is a ZIP archive. Binary data uses base64 or an equivalent 
+   format.
+3. Create several host OS scripts running the emulator. Include emulator invocations 
+   in each script to test operation with different VFS variants (minimal, multiple 
+   files, at least 3 nesting levels of files and folders).
+4. Create a startup script to test all commands implemented in this and previous 
+   stages. Include examples of all command modes, including VFS operations and 
+   error handling.
+5. Save the result of this stage to the repository with a standard formatted 
+   commit.
+
+--------------------------------------------------------------------------------
+Stage 4. Basic Commands
+--------------------------------------------------------------------------------
+Goal:
+Support commands simulating operations in a UNIX-like command line.
+
+Requirements:
+1. Implement the logic for ls and cd.
+2. Implement new commands: uname, clear.
+3. Create a startup script to test all commands implemented in this stage. 
+   Include examples of all command modes, including VFS operations and error 
+   handling.
+4. Save the result of this stage to the repository with a standard formatted 
+   commit.
+
+--------------------------------------------------------------------------------
+Stage 5. Additional Commands
+--------------------------------------------------------------------------------
+Goal:
+Support more complex commands that modify the VFS state, where all modifications 
+must take place strictly in memory.
+
+Requirements:
+1. Implement command: mv.
+2. Create a startup script to test all commands implemented in this stage. 
+   Include examples of all command modes, including VFS operations and error 
+   handling.
+3. Save the result of this stage to the repository with a standard formatted 
+   commit.
+
+
+================================================================================
+GIT REPOSITORY GUIDELINES & VIOLATIONS LIST (GENERAL & GO)
+================================================================================
+
+[Repository Structure]
+- C1: Missing README.md file in the repository.
+- C2: Missing .gitignore file in the repository.
+- C3: Missing 'src' source code folder in the repository.
+- C4: Missing 'tests' test folder in the repository.
+- C5: Missing startup script run.sh, run.bat, or Makefile in the repository.
+- C6: Commits do not comply with the Conventional/Scoped Commits specification.
+
+[Generated Files]
+- G1: Repository contains archive files.
+- G2: Repository contains binary files.
+- G4: Repository contains build artifacts.
+- G5: Repository contains code editor configuration/settings files.
+
+[Code Review]
+- R1: Repository contains files that are too large (>1000 lines).
+- R6: Repository code contains lines that are too long (>120 characters).
+
+[Functions]
+- F5: Go code contains functions that are too long (>40 lines).
+
+[Function Arguments]
+- A5: Go code contains functions with too many arguments (>7).
+
+[Comments instead of Documentation]
+- K5: Go code contains regular comments instead of Godoc documentation.
+
+[Cyclomatic Complexity]
+- CC5: Cyclomatic complexity of Go code is exceeded (>10).
+
+[Magic Numbers]
+- M5: Go code contains magic numeric literals in comparisons.
+
+[Identifier Names]
+- I5: Go code contains identifier names violating standard Go conventions.
+================================================================================
