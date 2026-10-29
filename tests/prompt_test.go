@@ -20,6 +20,7 @@ var promptCases = []struct {
 	{"superuser", shell.HostInfo{User: "root", Host: "pc", Home: "/root", Root: true}, "/root", "root@pc:~# "},
 }
 
+// TestPrompt checks the prompt for directories inside and outside home and for the superuser.
 func TestPrompt(t *testing.T) {
 	for _, tc := range promptCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,6 +31,7 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
+// TestDetectHost checks that the real host data yields a non-empty user, host and directory.
 func TestDetectHost(t *testing.T) {
 	host := shell.DetectHost()
 	if host.User == "" {

@@ -12,12 +12,14 @@ var testHost = shell.HostInfo{User: "alice", Host: "wonderland", Home: "/home/al
 
 const testPrompt = "alice@wonderland:~$ "
 
+// session is a shell under test together with the buffers that capture its output.
 type session struct {
 	shell  *shell.Shell
 	out    *bytes.Buffer
 	errOut *bytes.Buffer
 }
 
+// newSession returns a session for the test host that reads input as the user's typing.
 func newSession(input string) *session {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	return &session{
@@ -45,6 +47,8 @@ var executeCases = []struct {
 	{"ls with quoted arguments", `ls -l "my dir" 'a b'`, shell.StatusOK, "ls args: [\"-l\" \"my dir\" \"a b\"]\n", ""},
 	{"cd with arguments", `cd /usr/local`, shell.StatusOK, "cd args: [\"/usr/local\"]\n", ""},
 	{"quoted command name", `"ls" x`, shell.StatusOK, "ls args: [\"x\"]\n", ""},
+	{"comment line", "// ls", shell.StatusOK, "", ""},
+	{"trailing comment", "ls a // b", shell.StatusOK, "ls args: [\"a\"]\n", ""},
 	{"unknown command", "foo bar", shell.StatusNotFound, "", "vshell: foo: command not found\n"},
 	{"unterminated quote", `ls "abc`, shell.StatusMisuse, "",
 		"vshell: syntax error: unexpected EOF while looking for matching quote `\"'\n"},
@@ -53,6 +57,7 @@ var executeCases = []struct {
 	{"exit with too many arguments", "exit 1 2", shell.StatusError, "", "vshell: exit: too many arguments\n"},
 }
 
+// TestExecute checks the status, output and errors of single command lines.
 func TestExecute(t *testing.T) {
 	for _, tc := range executeCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,11 +88,13 @@ var runCases = []struct {
 	{"exit keeps the last status", "foo\nexit\n", shell.StatusNotFound},
 	{"end of input keeps the last status", "foo\n", shell.StatusNotFound},
 	{"success resets the status", "foo\nls\nexit\n", shell.StatusOK},
+	{"comment keeps the status", "foo\n// note\nexit\n", shell.StatusNotFound},
 	{"exit with a non-numeric argument", "exit abc\nexit 5\n", shell.StatusMisuse},
 	{"exit with too many arguments goes on", "exit 1 2\nexit 7\n", 7},
 	{"last line without newline", "exit 4", 4},
 }
 
+// TestRun checks the exit status a whole session ends with.
 func TestRun(t *testing.T) {
 	for _, tc := range runCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +105,7 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// TestRunDialogue checks that prompts, output and errors interleave like a real dialogue.
 func TestRunDialogue(t *testing.T) {
 	s := newSession("ls \"a b\"\nfoo\ncd ..\nexit\nls ignored\n")
 	s.shell.Run()
@@ -110,6 +118,7 @@ func TestRunDialogue(t *testing.T) {
 	}
 }
 
+// TestRunEndOfInput checks that the end of input prints exit, as bash does.
 func TestRunEndOfInput(t *testing.T) {
 	s := newSession("ls\n")
 	s.shell.Run()
@@ -118,6 +127,7 @@ func TestRunEndOfInput(t *testing.T) {
 	}
 }
 
+// TestExitNonNumeric checks the error exit reports for a non-numeric status.
 func TestExitNonNumeric(t *testing.T) {
 	s := newSession("exit abc\n")
 	s.shell.Run()
@@ -126,6 +136,7 @@ func TestExitNonNumeric(t *testing.T) {
 	}
 }
 
+// TestRunTrailingEscape checks that a backslash before CRLF is a syntax error, not an escaped CR.
 func TestRunTrailingEscape(t *testing.T) {
 	s := newSession("ls abc\\\r\nexit\n")
 	s.shell.Run()

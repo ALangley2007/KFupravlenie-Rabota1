@@ -11,12 +11,16 @@ const (
 	exitStatusMask = 0xFF
 )
 
+// ErrTooManyArguments is returned by a command that got more arguments than it accepts.
 var ErrTooManyArguments = errors.New("too many arguments")
 
+// ErrNumericArgument is returned by exit when its argument is not a number.
 var ErrNumericArgument = errors.New("numeric argument required")
 
+// Command is a built-in command: it runs in session s with the arguments after its name.
 type Command func(s *Shell, args []string) error
 
+// builtins returns the table of built-in commands keyed by name.
 func builtins() map[string]Command {
 	return map[string]Command{
 		"ls":   stub("ls"),
@@ -25,6 +29,7 @@ func builtins() map[string]Command {
 	}
 }
 
+// stub returns a placeholder command that only prints its name and arguments.
 func stub(name string) Command {
 	return func(s *Shell, args []string) error {
 		_, err := fmt.Fprintf(s.out, "%s args: %q\n", name, args)
@@ -32,6 +37,9 @@ func stub(name string) Command {
 	}
 }
 
+// exitCommand implements exit [n]: it ends the session with status n modulo 256, or with
+// the last status when n is omitted. A non-numeric n ends the session with status 2,
+// as in bash; more than one argument is an error that keeps the session running.
 func exitCommand(s *Shell, args []string) error {
 	if len(args) == 0 {
 		s.Exit(s.status)

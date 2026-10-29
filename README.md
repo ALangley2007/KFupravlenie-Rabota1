@@ -2,9 +2,10 @@
 
 Эмулятор командной оболочки UNIX-подобной ОС, написанный на Go.
 
-Текущее состояние: **Этап 1 — REPL**. Эмулятор ведет интерактивный диалог,
-разбирает командные строки с аргументами в кавычках и передает их командам.
-`ls` и `cd` пока являются заглушками; `exit` полностью реализована.
+Текущее состояние: **Этап 2 — Конфигурация**. Эмулятор принимает параметры командной строки
+(путь к VFS и путь к стартовому скрипту), выводит их при запуске для отладки и выполняет
+стартовый скрипт перед интерактивным сеансом. `ls` и `cd` пока являются заглушками;
+`exit` полностью реализована.
 
 ## Требования
 
@@ -13,23 +14,85 @@
 ## Использование
 
 ```
-./run.sh          # запуск из исходников
-make build        # сборка bin/vshell
-make test         # запуск тестов
-make check        # gofmt + go vet
-
+./run.sh [-vfs path] [-script path]   # сборка и запуск из текущей директории
+make build                            # сборка bin/vshell
+make test                             # запуск тестов
+make check                            # gofmt + go vet
+make demo                             # запуск тестовых скриптов хоста из scripts/
 ```
+
+`run.sh` запускает эмулятор из той директории, где находится пользователь, поэтому
+относительные пути в параметрах и промпт соответствуют текущей директории.
 
 ## Структура проекта
 
 ```
-src/main.go            точка входа
-src/shell/parser.go    парсер командной строки (кавычки, экранирование)
-src/shell/prompt.go    определение данных хоста и отрисовка приглашения
-src/shell/commands.go  реестр команд: ls, cd (заглушки), exit
-src/shell/shell.go     REPL, диспетчеризация команд, статусы выхода
-tests/                 black-box тесты пакета shell
+src/main.go              точка входа
+src/app/app.go           запуск эмулятора: параметры, отладочный вывод, скрипт, REPL
+src/config/options.go    разбор параметров командной строки и их отладочный вывод
+src/shell/parser.go      парсер командной строки (кавычки, экранирование, комментарии)
+src/shell/prompt.go      определение данных хоста и отрисовка приглашения
+src/shell/commands.go    реестр команд: ls, cd (заглушки), exit
+src/shell/script.go      выполнение стартового скрипта
+src/shell/shell.go       REPL, диспетчеризация команд, статусы выхода
+scripts/                 тестовые скрипты хоста (sh), вызывающие эмулятор
+scripts/startup/         стартовые скрипты эмулятора (.vsh)
+tests/                   black-box тесты пакетов
+```
 
+## Параметры командной строки
+
+| Параметр | Назначение |
+| ----- | ----- |
+| `-vfs path` | путь к физическому расположению VFS (подключается на этапе 3, пока только выводится) |
+| `-script path` | путь к стартовому скрипту, выполняемому перед интерактивным сеансом |
+| `-h`, `-help` | справка по параметрам |
+
+Допустимы формы `-vfs path`, `-vfs=path`, `--vfs path` и `--vfs=path`, параметры можно
+указывать в любом порядке. Позиционные аргументы не принимаются.
+
+### Отладочный вывод
+
+При каждом запуске эмулятор выводит в поток ошибок все параметры и их значения.
+Значения выводятся в кавычках, чтобы были видны пробелы; незаданные параметры помечаются.
+
+```
+$ ./run.sh -vfs "my vfs"
+[debug] vfs: "my vfs"
+[debug] script: (not set)
+user@host:~/kf$
+```
+
+## Стартовый скрипт
+
+Стартовый скрипт — текстовый файл с командами эмулятора, по одной на строку.
+
+* Каждая строка выводится после промпта, а затем выполняется, так что на экране видны и ввод,
+  и вывод — как в диалоге с пользователем. Пустые строки и комментарии тоже выводятся.
+* Комментарии используют синтаксис Go: `//` начинает комментарий до конца строки. Как и `#`
+  в UNIX-оболочке, `//` открывает комментарий только в начале слова, поэтому `a//b`,
+  `"// x"`, `'//x'` и `\//x` остаются обычными аргументами. Комментарии работают и в
+  интерактивном режиме.
+* Ошибка выполнения команды сообщается с именем скрипта и номером строки, после чего скрипт
+  продолжается со следующей строки, как в неинтерактивном bash.
+* `exit` в скрипте завершает и скрипт, и весь сеанс с указанным статусом.
+* Если скрипт завершился без `exit`, начинается интерактивный сеанс; статус последней команды
+  скрипта сохраняется.
+* Строки с окончаниями CRLF обрабатываются корректно.
+
+```
+// Пример стартового скрипта
+ls -l "my dir"      // комментарий в конце строки
+foo
+```
+
+```
+user@host:~/kf$ // Пример стартового скрипта
+user@host:~/kf$ ls -l "my dir"      // комментарий в конце строки
+ls args: ["-l" "my dir"]
+user@host:~/kf$ foo
+vshell: init.vsh: line 3: foo: command not found
+user@host:~/kf$
 ```
 
 ## Возможности
@@ -42,65 +105,93 @@ tests/                 black-box тесты пакета shell
 
 ```
 username@hostname:~$
-
 ```
 
 ### Парсер
 
 Правила экранирования и кавычек соответствуют стандарту POSIX shell.
 
-| Ввод | Аргументы | Правило | 
-| ----- | ----- | ----- | 
-| `ls a   b` | `a`, `b` | пробелы разделяют аргументы | 
-| `ls "my dir"` | `my dir` | двойные кавычки сохраняют пробелы | 
-| `ls 'my dir'` | `my dir` | одинарные кавычки сохраняют всё буквально | 
-| `ls my\ dir` | `my dir` | обратный слеш экранирует следующий символ | 
-| `ls "a \"b\""` | `a "b"` | внутри двойных кавычек `\` экранирует `"`, `\`, `$`, `` ` `` | 
-| `ls a"b c"d` | `ab cd` | соседние части объединяются в один аргумент | 
-| `ls ""` | (пустая строка) | пустые кавычки дают пустой аргумент | 
+| Ввод | Аргументы | Правило |
+| ----- | ----- | ----- |
+| `ls a   b` | `a`, `b` | пробелы разделяют аргументы |
+| `ls "my dir"` | `my dir` | двойные кавычки сохраняют пробелы |
+| `ls 'my dir'` | `my dir` | одинарные кавычки сохраняют всё буквально |
+| `ls my\ dir` | `my dir` | обратный слеш экранирует следующий символ |
+| `ls "a \"b\""` | `a "b"` | внутри двойных кавычек `\` экранирует `"`, `\`, `$`, `` ` `` |
+| `ls a"b c"d` | `ab cd` | соседние части объединяются в один аргумент |
+| `ls ""` | (пустая строка) | пустые кавычки дают пустой аргумент |
+| `ls a // b` | `a` | `//` в начале слова начинает комментарий |
+| `ls a//b` | `a//b` | `//` внутри слова — обычные символы |
 
 ### Команды
 
-| Команда | Поведение | 
-| ----- | ----- | 
-| `ls [args]` | заглушка: выводит свое имя и аргументы | 
-| `cd [args]` | заглушка: выводит свое имя и аргументы | 
-| `exit [n]` | завершает сессию со статусом `n` (mod 256) или статусом последней команды | 
+| Команда | Поведение |
+| ----- | ----- |
+| `ls [args]` | заглушка: выводит свое имя и аргументы |
+| `cd [args]` | заглушка: выводит свое имя и аргументы |
+| `exit [n]` | завершает сессию со статусом `n` (mod 256) или статусом последней команды |
 
 Конец ввода (Ctrl-D) также завершает сессию.
 
 ### Ошибки и статусы выхода
 
-| Ситуация | Сообщение | Статус | 
-| ----- | ----- | ----- | 
-| неизвестная команда | `vshell: foo: command not found` | 127 | 
-| незакрытая кавычка | `` vshell: syntax error: unexpected EOF while looking for matching quote `"' `` | 2 | 
-| обратный слеш в конце строки | `vshell: syntax error: unexpected EOF after escape character` | 2 | 
-| `exit 1 2` | `vshell: exit: too many arguments` (сессия продолжается) | 1 | 
-| `exit abc` | `vshell: exit: abc: numeric argument required` (сессия завершается, как в bash) | 2 | 
+| Ситуация | Сообщение | Статус |
+| ----- | ----- | ----- |
+| неизвестная команда | `vshell: foo: command not found` | 127 |
+| незакрытая кавычка | `` vshell: syntax error: unexpected EOF while looking for matching quote `"' `` | 2 |
+| обратный слеш в конце строки | `vshell: syntax error: unexpected EOF after escape character` | 2 |
+| `exit 1 2` | `vshell: exit: too many arguments` (сессия продолжается) | 1 |
+| `exit abc` | `vshell: exit: abc: numeric argument required` (сессия завершается, как в bash) | 2 |
+| ошибка в стартовом скрипте | `vshell: init.vsh: line 3: foo: command not found` (скрипт продолжается) | статус команды |
+| неизвестный параметр | `flag provided but not defined: -x` и справка | 2 |
+| параметр без значения | `flag needs an argument: -script` и справка | 2 |
+| лишний аргумент | `unexpected argument: extra` и справка | 2 |
+| скрипт не найден | `vshell: init.vsh: no such file or directory` | 127 |
+| скрипт не читается (директория, нет прав) | `vshell: scripts: is a directory` | 126 |
+
+## Тестовые скрипты хоста
+
+Скрипты в `scripts/` собирают эмулятор, запускают его с разными параметрами из корня
+репозитория и печатают командную строку каждого запуска и его статус выхода.
+Интерактивный ввод в них не подается (или подается через конвейер), поэтому сеанс
+завершается сам.
+
+| Скрипт | Что проверяет |
+| ----- | ----- |
+| `scripts/test_options.sh` | без параметров, только `-vfs`, только `-script`, оба в разном порядке, формы `--name=value`, пути с пробелами и абсолютные пути, `-h` |
+| `scripts/test_startup.sh` | комментарии и кавычки в скрипте, ошибки с номерами строк, `exit` в скрипте, интерактивный сеанс после скрипта |
+| `scripts/test_errors.sh` | неизвестный параметр, параметр без значения, лишний аргумент, отсутствующий скрипт, директория вместо скрипта |
+
+Стартовые скрипты для них лежат в `scripts/startup/`: `hello.vsh`, `demo.vsh`, `errors.vsh`, `exit.vsh`.
 
 ## Демонстрационная сессия
 
 ```
-user@host:~/kf$ ls
-ls args: []
-user@host:~/kf$ ls -l "my dir" 'single quoted' escaped\ space
-ls args: ["-l" "my dir" "single quoted" "escaped space"]
-user@host:~/kf$ cd "/usr/local/my folder"
-cd args: ["/usr/local/my folder"]
-user@host:~/kf$ cd a"b c"d "" 'it"s'
-cd args: ["ab cd" "" "it\"s"]
-user@host:~/kf$
-user@host:~/kf$ foo --bar
-vshell: foo: command not found
-user@host:~/kf$ ls "unterminated
-vshell: syntax error: unexpected EOF while looking for matching quote `"'
-user@host:~/kf$ ls trailing\
-vshell: syntax error: unexpected EOF after escape character
-user@host:~/kf$ exit 1 2
-vshell: exit: too many arguments
+$ ./run.sh -vfs vfs -script scripts/startup/exit.vsh
+[debug] vfs: "vfs"
+[debug] script: "scripts/startup/exit.vsh"
+user@host:~/kf$ // exit ends the script and the whole session with the given status,
+user@host:~/kf$ // so the lines after it never run and no interactive prompt follows.
+user@host:~/kf$ ls before exit
+ls args: ["before" "exit"]
 user@host:~/kf$ exit 3
 $ echo $?
 3
 
+$ ./run.sh
+[debug] vfs: (not set)
+[debug] script: (not set)
+user@host:~/kf$ ls -l "my dir" 'single quoted' escaped\ space
+ls args: ["-l" "my dir" "single quoted" "escaped space"]
+user@host:~/kf$ cd a"b c"d "" 'it"s'
+cd args: ["ab cd" "" "it\"s"]
+user@host:~/kf$ ls a // comment
+ls args: ["a"]
+user@host:~/kf$ foo --bar
+vshell: foo: command not found
+user@host:~/kf$ ls "unterminated
+vshell: syntax error: unexpected EOF while looking for matching quote `"'
+user@host:~/kf$ exit 1 2
+vshell: exit: too many arguments
+user@host:~/kf$ exit
 ```

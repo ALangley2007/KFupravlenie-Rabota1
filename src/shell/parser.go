@@ -11,14 +11,18 @@ const (
 	singleQuote = '\''
 	doubleQuote = '"'
 	escapeChar  = '\\'
+	commentChar = '/'
 )
 
 const escapableInDoubleQuotes = "\"\\$`"
 
+// ErrUnterminatedQuote is returned by Parse when a quoted part is not closed.
 var ErrUnterminatedQuote = errors.New("unexpected EOF while looking for matching quote")
 
+// ErrTrailingEscape is returned by Parse when the line ends with a backslash.
 var ErrTrailingEscape = errors.New("unexpected EOF after escape character")
 
+// lexer splits one command line into arguments, keeping the state between characters.
 type lexer struct {
 	input   []rune
 	pos     int
@@ -27,6 +31,11 @@ type lexer struct {
 	inToken bool
 }
 
+// Parse splits line into arguments following the POSIX shell quoting rules: blanks
+// separate arguments, single quotes keep text literally, double quotes keep blanks and
+// allow escaping ", \, $ and `, and a backslash outside quotes escapes the next character.
+// A "//" at the start of a word begins a Go-style comment that runs to the end of the
+// line. Parse returns nil for a line with no arguments.
 func Parse(line string) ([]string, error) {
 	lx := &lexer{input: []rune(line)}
 	for !lx.done() {
@@ -38,21 +47,25 @@ func Parse(line string) ([]string, error) {
 	return lx.args, nil
 }
 
+// done reports whether the whole input has been read.
 func (lx *lexer) done() bool {
 	return lx.pos >= len(lx.input)
 }
 
+// next returns the character at the current position and moves past it.
 func (lx *lexer) next() rune {
 	char := lx.input[lx.pos]
 	lx.pos++
 	return char
 }
 
+// write appends char to the argument being built and marks that argument as started.
 func (lx *lexer) write(char rune) {
 	lx.current.WriteRune(char)
 	lx.inToken = true
 }
 
+// flush finishes the argument being built, if any, and adds it to the result.
 func (lx *lexer) flush() {
 	if !lx.inToken {
 		return
@@ -62,11 +75,15 @@ func (lx *lexer) flush() {
 	lx.inToken = false
 }
 
+// step reads one character and acts on it: ends the argument on a blank, skips a comment,
+// reads a quoted or escaped part, or adds a plain character to the argument.
 func (lx *lexer) step() error {
 	char := lx.next()
 	switch {
 	case unicode.IsSpace(char):
 		lx.flush()
+	case lx.opensComment(char):
+		lx.pos = len(lx.input)
 	case char == singleQuote:
 		return lx.readSingleQuoted()
 	case char == doubleQuote:
@@ -79,6 +96,14 @@ func (lx *lexer) step() error {
 	return nil
 }
 
+// opensComment reports whether char, just read, starts a "//" comment. Like "#" in
+// a UNIX shell, it does so only at the start of a word, so paths such as a//b and
+// quoted or escaped slashes stay intact.
+func (lx *lexer) opensComment(char rune) bool {
+	return char == commentChar && !lx.inToken && !lx.done() && lx.input[lx.pos] == commentChar
+}
+
+// readSingleQuoted reads up to the closing single quote, keeping every character as is.
 func (lx *lexer) readSingleQuoted() error {
 	lx.inToken = true
 	for !lx.done() {
@@ -91,6 +116,7 @@ func (lx *lexer) readSingleQuoted() error {
 	return unterminated(singleQuote)
 }
 
+// readDoubleQuoted reads up to the closing double quote, handling escapes inside it.
 func (lx *lexer) readDoubleQuoted() error {
 	lx.inToken = true
 	for !lx.done() {
@@ -109,6 +135,8 @@ func (lx *lexer) readDoubleQuoted() error {
 	return unterminated(doubleQuote)
 }
 
+// readEscapedInQuotes reads the character after a backslash inside double quotes.
+// Only ", \, $ and ` are escaped; before any other character the backslash is kept.
 func (lx *lexer) readEscapedInQuotes() error {
 	if lx.done() {
 		return unterminated(doubleQuote)
@@ -121,6 +149,7 @@ func (lx *lexer) readEscapedInQuotes() error {
 	return nil
 }
 
+// readEscaped reads the character after a backslash outside quotes and keeps it literally.
 func (lx *lexer) readEscaped() error {
 	if lx.done() {
 		return ErrTrailingEscape
@@ -129,6 +158,7 @@ func (lx *lexer) readEscaped() error {
 	return nil
 }
 
+// unterminated returns ErrUnterminatedQuote naming the quote that was left open.
 func unterminated(quote rune) error {
 	return fmt.Errorf("%w `%c'", ErrUnterminatedQuote, quote)
 }

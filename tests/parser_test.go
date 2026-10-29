@@ -29,6 +29,17 @@ var parseCases = []struct {
 	{"backslash kept inside double", `"a\nb"`, []string{`a\nb`}},
 	{"backslash literal inside single", `'a\\b'`, []string{`a\\b`}},
 	{"unicode", `ls "папка один" 文件`, []string{"ls", "папка один", "文件"}},
+	{"comment line", "// just a comment", nil},
+	{"indented comment", " \t// comment", nil},
+	{"trailing comment", `ls -l // list "files"`, []string{"ls", "-l"}},
+	{"comment right after a tab", "ls\t//x", []string{"ls"}},
+	{"comment without text", "ls //", []string{"ls"}},
+	{"comment hides quotes", `ls // "unterminated`, []string{"ls"}},
+	{"double slash inside a word", "ls a//b /usr//lib", []string{"ls", "a//b", "/usr//lib"}},
+	{"double slash after quotes", `ls "a"//b`, []string{"ls", "a//b"}},
+	{"quoted double slash", `ls "// x" '//y'`, []string{"ls", "// x", "//y"}},
+	{"escaped double slash", `ls \//x`, []string{"ls", "//x"}},
+	{"single slashes", "ls / /a / b", []string{"ls", "/", "/a", "/", "b"}},
 }
 
 var parseErrorCases = []struct {
@@ -43,6 +54,7 @@ var parseErrorCases = []struct {
 	{"trailing escape", `ls abc\`, shell.ErrTrailingEscape},
 }
 
+// TestParse checks that valid lines, including ones with comments, split into the expected arguments.
 func TestParse(t *testing.T) {
 	for _, tc := range parseCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,6 +69,7 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestParseErrors checks that malformed lines fail with the matching error and no arguments.
 func TestParseErrors(t *testing.T) {
 	for _, tc := range parseErrorCases {
 		t.Run(tc.name, func(t *testing.T) {

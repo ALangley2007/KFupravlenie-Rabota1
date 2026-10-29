@@ -20,6 +20,7 @@ const (
 	userDomainSeparator = `\`
 )
 
+// HostInfo describes the host machine data shown in the prompt.
 type HostInfo struct {
 	User string
 	Host string
@@ -27,6 +28,9 @@ type HostInfo struct {
 	Root bool
 }
 
+// DetectHost reads the current user, home directory and host name from the real OS.
+// Values that cannot be read fall back to "user" and "localhost"; the host name is
+// cut at the first dot and a Windows DOMAIN\user name is reduced to the user part.
 func DetectHost() HostInfo {
 	info := HostInfo{User: fallbackUser, Host: fallbackHost}
 	if current, err := user.Current(); err == nil {
@@ -43,6 +47,8 @@ func DetectHost() HostInfo {
 	return info
 }
 
+// WorkingDir returns the directory the emulator was started from, falling back to
+// the home directory and then to the root when it cannot be read.
 func (h HostInfo) WorkingDir() string {
 	if dir, err := os.Getwd(); err == nil {
 		return filepath.ToSlash(dir)
@@ -53,10 +59,13 @@ func (h HostInfo) WorkingDir() string {
 	return pathSeparator
 }
 
+// Prompt returns the prompt for dir in the form "user@host:dir$ ", with "#" for root.
 func (h HostInfo) Prompt(dir string) string {
 	return fmt.Sprintf("%s@%s:%s%s ", h.User, h.Host, h.DisplayPath(dir), h.promptSign())
 }
 
+// DisplayPath returns dir as the prompt shows it: the home directory and paths inside
+// it start with "~", other paths are kept unchanged.
 func (h HostInfo) DisplayPath(dir string) string {
 	if h.Home == "" {
 		return dir
@@ -71,6 +80,7 @@ func (h HostInfo) DisplayPath(dir string) string {
 	return dir
 }
 
+// promptSign returns "#" for the superuser and "$" for everyone else.
 func (h HostInfo) promptSign() string {
 	if h.Root {
 		return rootPromptSign
@@ -78,11 +88,13 @@ func (h HostInfo) promptSign() string {
 	return userPromptSign
 }
 
+// shortHostName returns host without its domain part, e.g. "pc" for "pc.local".
 func shortHostName(host string) string {
 	name, _, _ := strings.Cut(host, hostDomainSeparator)
 	return name
 }
 
+// shortUserName returns name without a Windows domain prefix, e.g. "bob" for `CORP\bob`.
 func shortUserName(name string) string {
 	return name[strings.LastIndex(name, userDomainSeparator)+1:]
 }
