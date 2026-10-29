@@ -47,18 +47,6 @@ func DetectHost() HostInfo {
 	return info
 }
 
-// WorkingDir returns the directory the emulator was started from, falling back to
-// the home directory and then to the root when it cannot be read.
-func (h HostInfo) WorkingDir() string {
-	if dir, err := os.Getwd(); err == nil {
-		return filepath.ToSlash(dir)
-	}
-	if h.Home != "" {
-		return h.Home
-	}
-	return pathSeparator
-}
-
 // Prompt returns the prompt for dir in the form "user@host:dir$ ", with "#" for root.
 func (h HostInfo) Prompt(dir string) string {
 	return fmt.Sprintf("%s@%s:%s%s ", h.User, h.Host, h.DisplayPath(dir), h.promptSign())

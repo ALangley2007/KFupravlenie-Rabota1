@@ -8,6 +8,7 @@ import (
 
 const (
 	maxExitArgs    = 1
+	maxTreeArgs    = 1
 	exitStatusMask = 0xFF
 )
 
@@ -26,6 +27,7 @@ func builtins() map[string]Command {
 		"ls":   stub("ls"),
 		"cd":   stub("cd"),
 		"exit": exitCommand,
+		"tree": treeCommand,
 	}
 }
 

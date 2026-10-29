@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"vshell/src/shell"
+	"vshell/src/vfs"
 )
 
 var testHost = shell.HostInfo{User: "alice", Host: "wonderland", Home: "/home/alice"}
@@ -19,8 +20,15 @@ type session struct {
 	errOut *bytes.Buffer
 }
 
-// newSession returns a session for the test host that reads input as the user's typing.
+// newSession returns a session for the test host that reads input as the user's typing
+// and starts in the home directory of an empty file system.
 func newSession(input string) *session {
+	return newFSSession(input, nil, testHost.Home)
+}
+
+// newFSSession returns a session for the test host that reads input as the user's typing
+// and starts in dir of fsys; nil and empty values select the shell defaults.
+func newFSSession(input string, fsys *vfs.FS, dir string) *session {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	return &session{
 		shell: shell.New(shell.Config{
@@ -28,7 +36,8 @@ func newSession(input string) *session {
 			Out:    out,
 			ErrOut: errOut,
 			Host:   testHost,
-			Dir:    testHost.Home,
+			FS:     fsys,
+			Dir:    dir,
 		}),
 		out:    out,
 		errOut: errOut,

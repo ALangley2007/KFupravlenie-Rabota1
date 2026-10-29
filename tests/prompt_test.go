@@ -31,7 +31,7 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
-// TestDetectHost checks that the real host data yields a non-empty user, host and directory.
+// TestDetectHost checks that the real host data yields a non-empty user and host name.
 func TestDetectHost(t *testing.T) {
 	host := shell.DetectHost()
 	if host.User == "" {
@@ -39,8 +39,5 @@ func TestDetectHost(t *testing.T) {
 	}
 	if host.Host == "" {
 		t.Error("DetectHost returned an empty host name")
-	}
-	if host.WorkingDir() == "" {
-		t.Error("WorkingDir returned an empty path")
 	}
 }

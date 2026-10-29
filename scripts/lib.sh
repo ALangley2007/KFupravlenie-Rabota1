@@ -4,6 +4,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd) || exit 1
 cd "$ROOT" || exit 1
 go build -o bin/vshell ./src || exit 1
 
+TMP=$(mktemp -d bin/tmp.XXXXXX) || exit 1
+trap 'rm -rf "$TMP"' EXIT
+
 section() {
 	printf '\n### %s\n' "$1"
 }

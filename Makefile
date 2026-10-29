@@ -21,6 +21,10 @@ demo:
 	sh scripts/test_options.sh
 	sh scripts/test_startup.sh
 	sh scripts/test_errors.sh
+	sh scripts/test_vfs_minimal.sh
+	sh scripts/test_vfs_multi.sh
+	sh scripts/test_vfs_deep.sh
+	sh scripts/test_vfs_errors.sh
 
 clean:
 	rm -rf bin

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"vshell/src/vfs"
 )
 
 // Name is the shell name used as the prefix of every error message.
@@ -51,7 +53,10 @@ type Config struct {
 	Out    io.Writer
 	ErrOut io.Writer
 	Host   HostInfo
-	Dir    string
+	// FS is the virtual file system the session works in; nil means an empty one.
+	FS *vfs.FS
+	// Dir is the starting directory inside FS; empty means the root.
+	Dir string
 }
 
 // Shell is one interactive session of the emulator.
@@ -60,6 +65,7 @@ type Shell struct {
 	out      io.Writer
 	errOut   io.Writer
 	host     HostInfo
+	fsys     *vfs.FS
 	dir      string
 	commands map[string]Command
 	status   int
@@ -68,17 +74,26 @@ type Shell struct {
 }
 
 // New returns a running session that reads commands from cfg.In, writes output to
-// cfg.Out and errors to cfg.ErrOut, and starts in the directory cfg.Dir.
+// cfg.Out and errors to cfg.ErrOut, and works in the virtual file system cfg.FS starting
+// from the directory cfg.Dir. Missing FS and Dir default to an empty file system and its root.
 func New(cfg Config) *Shell {
-	return &Shell{
+	s := &Shell{
 		in:       bufio.NewReader(cfg.In),
 		out:      cfg.Out,
 		errOut:   cfg.ErrOut,
 		host:     cfg.Host,
+		fsys:     cfg.FS,
 		dir:      cfg.Dir,
 		commands: builtins(),
 		running:  true,
 	}
+	if s.fsys == nil {
+		s.fsys = vfs.New()
+	}
+	if s.dir == "" {
+		s.dir = vfs.Root
+	}
+	return s
 }
 
 // Prompt returns the input prompt for the current directory, e.g. "user@host:~$ ".
@@ -114,6 +129,15 @@ func (s *Shell) Execute(line string) int {
 func (s *Shell) Exit(code int) {
 	s.exitCode = code
 	s.running = false
+}
+
+// resolve returns the absolute path of name: name itself when it starts with a slash,
+// otherwise name taken relative to the current directory.
+func (s *Shell) resolve(name string) string {
+	if strings.HasPrefix(name, vfs.Root) {
+		return name
+	}
+	return s.dir + vfs.Root + name
 }
 
 // executeFrom runs line like Execute, adding origin, such as "script: line 3",

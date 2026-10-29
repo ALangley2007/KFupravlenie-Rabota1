@@ -2,19 +2,21 @@
 
 Эмулятор командной оболочки UNIX-подобной ОС, написанный на Go.
 
-Текущее состояние: **Этап 2 — Конфигурация**. Эмулятор принимает параметры командной строки
-(путь к VFS и путь к стартовому скрипту), выводит их при запуске для отладки и выполняет
-стартовый скрипт перед интерактивным сеансом. `ls` и `cd` пока являются заглушками;
-`exit` полностью реализована.
+Текущее состояние: **Этап 3 — VFS**. Эмулятор загружает виртуальную файловую систему из
+ZIP-архива (обычного или закодированного в base64) и работает с ней только в памяти.
+Параметры командной строки задают путь к VFS и к стартовому скрипту; при запуске они выводятся
+для отладки. `ls` и `cd` пока являются заглушками; `exit` и вспомогательная утилита `tree`
+реализованы полностью.
 
 ## Требования
 
 * Go 1.22 или новее
+* для пересоздания архивов VFS: `zip`, `base64`, `fold`
 
 ## Использование
 
 ```
-./run.sh [-vfs path] [-script path]   # сборка и запуск из текущей директории
+./run.sh [-vfs path] [-script path]   # сборка и запуск
 make build                            # сборка bin/vshell
 make test                             # запуск тестов
 make check                            # gofmt + go vet
@@ -22,21 +24,26 @@ make demo                             # запуск тестовых скрип
 ```
 
 `run.sh` запускает эмулятор из той директории, где находится пользователь, поэтому
-относительные пути в параметрах и промпт соответствуют текущей директории.
+относительные пути в параметрах отсчитываются от текущей директории.
 
 ## Структура проекта
 
 ```
 src/main.go              точка входа
-src/app/app.go           запуск эмулятора: параметры, отладочный вывод, скрипт, REPL
+src/app/app.go           запуск эмулятора: параметры, отладочный вывод, VFS, скрипт, REPL
 src/config/options.go    разбор параметров командной строки и их отладочный вывод
+src/vfs/vfs.go           дерево VFS в памяти и поиск путей
+src/vfs/load.go          загрузка VFS из ZIP-архива или его base64-кодировки
 src/shell/parser.go      парсер командной строки (кавычки, экранирование, комментарии)
 src/shell/prompt.go      определение данных хоста и отрисовка приглашения
-src/shell/commands.go    реестр команд: ls, cd (заглушки), exit
+src/shell/commands.go    реестр команд: ls, cd (заглушки), exit, tree
+src/shell/tree.go        утилита tree
 src/shell/script.go      выполнение стартового скрипта
 src/shell/shell.go       REPL, диспетчеризация команд, статусы выхода
+vfs/                     варианты VFS: ZIP-архивы в base64 (.b64)
 scripts/                 тестовые скрипты хоста (sh), вызывающие эмулятор
 scripts/startup/         стартовые скрипты эмулятора (.vsh)
+scripts/mkvfs.sh         упаковка директории в base64-архив VFS
 tests/                   black-box тесты пакетов
 ```
 
@@ -44,7 +51,7 @@ tests/                   black-box тесты пакетов
 
 | Параметр | Назначение |
 | ----- | ----- |
-| `-vfs path` | путь к физическому расположению VFS (подключается на этапе 3, пока только выводится) |
+| `-vfs path` | путь к ZIP-архиву VFS (обычному или в base64); без него VFS пуста |
 | `-script path` | путь к стартовому скрипту, выполняемому перед интерактивным сеансом |
 | `-h`, `-help` | справка по параметрам |
 
@@ -57,10 +64,66 @@ tests/                   black-box тесты пакетов
 Значения выводятся в кавычках, чтобы были видны пробелы; незаданные параметры помечаются.
 
 ```
-$ ./run.sh -vfs "my vfs"
-[debug] vfs: "my vfs"
+$ ./run.sh -vfs vfs/minimal.b64
+[debug] vfs: "vfs/minimal.b64"
 [debug] script: (not set)
-user@host:~/kf$
+user@host:/$
+```
+
+## Виртуальная файловая система
+
+* Источник VFS — ZIP-архив. Двоичные данные хранятся в base64: в репозитории лежат только
+  текстовые файлы `vfs/*.b64`, а эмулятор принимает как base64-текст (с переносами строк
+  или без), так и обычный `.zip` — формат определяется по сигнатуре ZIP.
+* Архив читается с диска только один раз и целиком разбирается в дерево в памяти.
+  Ничего не распаковывается на диск и не изменяется; все дальнейшие операции идут в памяти.
+* Директории, которых нет в архиве явно, но которые следуют из путей файлов, создаются
+  автоматически. Пустые директории сохраняются. Содержимое файлов (в том числе двоичное)
+  хранится в памяти, суммарно не более 64 МиБ.
+* Сеанс начинается в корне VFS `/`, промпт показывает текущую директорию VFS.
+* Пути разбираются по элементам, как в ядре UNIX: `.` и `..` поддерживаются, `..` в корне
+  остается в корне, а путь через файл (`file/x`, `file/`, `file/..`) дает `not a directory`.
+* Если VFS не загружается, эмулятор сообщает об ошибке с путем к файлу и завершается со
+  статусом 1, не запуская стартовый скрипт.
+
+### Варианты VFS
+
+| Файл | Содержимое |
+| ----- | ----- |
+| `vfs/minimal.b64` | один файл `readme.txt` в корне |
+| `vfs/multi.b64` | семь файлов, в том числе двоичные `logo.png` и `data.bin`, и директория `docs` |
+| `vfs/deep.b64` | 10 директорий с вложенностью до пяти уровней (`/home/guest/projects/vshell/src/main.go`) и пустая `/tmp` |
+
+```
+$ ./run.sh -vfs vfs/deep.b64
+user@host:/$ tree
+.
+├── etc
+│   ├── hostname
+│   └── motd
+├── home
+│   └── guest
+│       ├── notes.txt
+│       └── projects
+│           └── vshell
+│               ├── README.md
+│               └── src
+│                   └── main.go
+├── tmp
+└── var
+    └── log
+        └── emulator
+            └── boot.log
+
+10 directories, 6 files
+```
+
+Новый вариант VFS делается из любой директории утилитой `scripts/mkvfs.sh`: она упаковывает
+директорию в ZIP в конвейере и сразу кодирует его в base64, так что двоичный архив на диск
+не попадает.
+
+```
+scripts/mkvfs.sh path/to/dir vfs/my.b64
 ```
 
 ## Стартовый скрипт
@@ -82,29 +145,34 @@ user@host:~/kf$
 
 ```
 // Пример стартового скрипта
-ls -l "my dir"      // комментарий в конце строки
-foo
+tree /etc           // комментарий в конце строки
+tree /nope
 ```
 
 ```
-user@host:~/kf$ // Пример стартового скрипта
-user@host:~/kf$ ls -l "my dir"      // комментарий в конце строки
-ls args: ["-l" "my dir"]
-user@host:~/kf$ foo
-vshell: init.vsh: line 3: foo: command not found
-user@host:~/kf$
+user@host:/$ // Пример стартового скрипта
+user@host:/$ tree /etc           // комментарий в конце строки
+/etc
+├── hostname
+└── motd
+
+0 directories, 2 files
+user@host:/$ tree /nope
+vshell: init.vsh: line 3: tree: /nope: no such file or directory
+user@host:/$
 ```
 
 ## Возможности
 
 ### Prompt
 
-Промпт формируется на основе реальных данных хостовой машины: имени пользователя, имени хоста
-(без доменной части) и директории, из которой был запущен эмулятор.
-Домашняя директория отображается как `~`; суперпользователь получает `#` вместо `$`.
+Промпт формируется на основе реальных данных хостовой машины: имени пользователя и имени хоста
+(без доменной части), за которыми следует текущая директория VFS. Если она совпадает с домашней
+директорией пользователя хоста или лежит внутри нее, путь начинается с `~`; суперпользователь
+получает `#` вместо `$`.
 
 ```
-username@hostname:~$
+username@hostname:/$
 ```
 
 ### Парсер
@@ -129,7 +197,11 @@ username@hostname:~$
 | ----- | ----- |
 | `ls [args]` | заглушка: выводит свое имя и аргументы |
 | `cd [args]` | заглушка: выводит свое имя и аргументы |
+| `tree [path]` | утилита: выводит `path` (по умолчанию текущую директорию) и все, что под ним, деревом с сортировкой по имени и итогом `N directories, M files`, как UNIX `tree` |
 | `exit [n]` | завершает сессию со статусом `n` (mod 256) или статусом последней команды |
+
+`tree` — вспомогательная команда этого этапа: `ls` и `cd` получат логику только на этапе 4,
+а показать содержимое загруженной VFS нужно уже сейчас.
 
 Конец ввода (Ctrl-D) также завершает сессию.
 
@@ -142,10 +214,17 @@ username@hostname:~$
 | обратный слеш в конце строки | `vshell: syntax error: unexpected EOF after escape character` | 2 |
 | `exit 1 2` | `vshell: exit: too many arguments` (сессия продолжается) | 1 |
 | `exit abc` | `vshell: exit: abc: numeric argument required` (сессия завершается, как в bash) | 2 |
+| `tree /nope` | `vshell: tree: /nope: no such file or directory` | 1 |
+| `tree /etc/motd/` | `vshell: tree: /etc/motd/: not a directory` | 1 |
+| `tree a b` | `vshell: tree: too many arguments` | 1 |
 | ошибка в стартовом скрипте | `vshell: init.vsh: line 3: foo: command not found` (скрипт продолжается) | статус команды |
 | неизвестный параметр | `flag provided but not defined: -x` и справка | 2 |
 | параметр без значения | `flag needs an argument: -script` и справка | 2 |
 | лишний аргумент | `unexpected argument: extra` и справка | 2 |
+| файл VFS не найден | `vshell: vfs/x.b64: no such file or directory` | 1 |
+| файл VFS — директория | `vshell: vfs: is a directory` | 1 |
+| файл VFS — не архив | `vshell: x.b64: not a ZIP archive` (с причиной, если она известна) | 1 |
+| некорректная запись в архиве | `vshell: x.b64: entry "../a": invalid name` | 1 |
 | скрипт не найден | `vshell: init.vsh: no such file or directory` | 127 |
 | скрипт не читается (директория, нет прав) | `vshell: scripts: is a directory` | 126 |
 
@@ -154,44 +233,54 @@ username@hostname:~$
 Скрипты в `scripts/` собирают эмулятор, запускают его с разными параметрами из корня
 репозитория и печатают командную строку каждого запуска и его статус выхода.
 Интерактивный ввод в них не подается (или подается через конвейер), поэтому сеанс
-завершается сам.
+завершается сам. Временные файлы создаются в `bin/` и удаляются по завершении скрипта.
 
 | Скрипт | Что проверяет |
 | ----- | ----- |
 | `scripts/test_options.sh` | без параметров, только `-vfs`, только `-script`, оба в разном порядке, формы `--name=value`, пути с пробелами и абсолютные пути, `-h` |
 | `scripts/test_startup.sh` | комментарии и кавычки в скрипте, ошибки с номерами строк, `exit` в скрипте, интерактивный сеанс после скрипта |
 | `scripts/test_errors.sh` | неизвестный параметр, параметр без значения, лишний аргумент, отсутствующий скрипт, директория вместо скрипта |
+| `scripts/test_vfs_minimal.sh` | минимальная VFS: base64 с переносами и в одну строку, обычный ZIP, запуск без VFS |
+| `scripts/test_vfs_multi.sh` | VFS из нескольких текстовых и двоичных файлов |
+| `scripts/test_vfs_deep.sh` | VFS с вложенностью до пяти уровней и стартовый скрипт `vfs.vsh`, проверяющий все команды |
+| `scripts/test_vfs_errors.sh` | отсутствующий файл VFS, директория, пустой файл, не base64, base64 не архива, обрезанный ZIP |
 
-Стартовые скрипты для них лежат в `scripts/startup/`: `hello.vsh`, `demo.vsh`, `errors.vsh`, `exit.vsh`.
+Стартовые скрипты для них лежат в `scripts/startup/`: `hello.vsh`, `demo.vsh`, `errors.vsh`,
+`exit.vsh`, `tree.vsh` и `vfs.vsh` — сценарий этапа 3, проверяющий все реализованные команды,
+операции с VFS и обработку ошибок.
 
 ## Демонстрационная сессия
 
 ```
-$ ./run.sh -vfs vfs -script scripts/startup/exit.vsh
-[debug] vfs: "vfs"
-[debug] script: "scripts/startup/exit.vsh"
-user@host:~/kf$ // exit ends the script and the whole session with the given status,
-user@host:~/kf$ // so the lines after it never run and no interactive prompt follows.
-user@host:~/kf$ ls before exit
-ls args: ["before" "exit"]
-user@host:~/kf$ exit 3
+$ ./run.sh -vfs vfs/multi.b64
+[debug] vfs: "vfs/multi.b64"
+[debug] script: (not set)
+user@host:/$ tree docs
+docs
+├── faq.md
+└── guide.md
+
+0 directories, 2 files
+user@host:/$ tree ./docs/../logo.png
+./docs/../logo.png
+
+0 directories, 1 file
+user@host:/$ tree data.bin/x
+vshell: tree: data.bin/x: not a directory
+user@host:/$ ls -l "my dir" 'single quoted' escaped\ space
+ls args: ["-l" "my dir" "single quoted" "escaped space"]
+user@host:/$ ls a // comment
+ls args: ["a"]
+user@host:/$ foo --bar
+vshell: foo: command not found
+user@host:/$ exit 3
 $ echo $?
 3
 
-$ ./run.sh
-[debug] vfs: (not set)
+$ ./run.sh -vfs vfs/missing.b64
+[debug] vfs: "vfs/missing.b64"
 [debug] script: (not set)
-user@host:~/kf$ ls -l "my dir" 'single quoted' escaped\ space
-ls args: ["-l" "my dir" "single quoted" "escaped space"]
-user@host:~/kf$ cd a"b c"d "" 'it"s'
-cd args: ["ab cd" "" "it\"s"]
-user@host:~/kf$ ls a // comment
-ls args: ["a"]
-user@host:~/kf$ foo --bar
-vshell: foo: command not found
-user@host:~/kf$ ls "unterminated
-vshell: syntax error: unexpected EOF while looking for matching quote `"'
-user@host:~/kf$ exit 1 2
-vshell: exit: too many arguments
-user@host:~/kf$ exit
+vshell: vfs/missing.b64: no such file or directory
+$ echo $?
+1
 ```
