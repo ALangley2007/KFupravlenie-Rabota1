@@ -31,6 +31,10 @@ const (
 // ErrCommandNotFound is reported when no command has the requested name.
 var ErrCommandNotFound = errors.New("command not found")
 
+// errReported marks a failure whose messages the command has already printed itself,
+// so the shell only records its status.
+var errReported = errors.New("errors already reported")
+
 // ExitError is an error that carries the exit status it should set.
 type ExitError struct {
 	Status int
@@ -53,10 +57,10 @@ type Config struct {
 	Out    io.Writer
 	ErrOut io.Writer
 	Host   HostInfo
+	// System describes the host OS for uname.
+	System SystemInfo
 	// FS is the virtual file system the session works in; nil means an empty one.
 	FS *vfs.FS
-	// Dir is the starting directory inside FS; empty means the root.
-	Dir string
 }
 
 // Shell is one interactive session of the emulator.
@@ -65,40 +69,51 @@ type Shell struct {
 	out      io.Writer
 	errOut   io.Writer
 	host     HostInfo
+	system   SystemInfo
 	fsys     *vfs.FS
-	dir      string
+	cwd      *vfs.Node
+	oldDir   *vfs.Node
 	commands map[string]Command
+	origin   string
 	status   int
 	exitCode int
 	running  bool
 }
 
 // New returns a running session that reads commands from cfg.In, writes output to
-// cfg.Out and errors to cfg.ErrOut, and works in the virtual file system cfg.FS starting
-// from the directory cfg.Dir. Missing FS and Dir default to an empty file system and its root.
+// cfg.Out and errors to cfg.ErrOut, and works in the virtual file system cfg.FS, or in
+// an empty one when it is nil. Like a login, the session starts in the user's home
+// directory, or in the root when the VFS has no such directory.
 func New(cfg Config) *Shell {
 	s := &Shell{
 		in:       bufio.NewReader(cfg.In),
 		out:      cfg.Out,
 		errOut:   cfg.ErrOut,
 		host:     cfg.Host,
+		system:   cfg.System,
 		fsys:     cfg.FS,
-		dir:      cfg.Dir,
 		commands: builtins(),
 		running:  true,
 	}
 	if s.fsys == nil {
 		s.fsys = vfs.New()
 	}
-	if s.dir == "" {
-		s.dir = vfs.Root
+	if s.host.Home == "" {
+		s.host.Home = s.host.DefaultHome()
+	}
+	if s.host.Group == "" {
+		s.host.Group = s.host.User
+	}
+	s.cwd = s.fsys.Root()
+	if home, err := s.fsys.Lookup(s.host.Home); err == nil && home.IsDir() {
+		s.cwd = home
 	}
 	return s
 }
 
 // Prompt returns the input prompt for the current directory, e.g. "user@host:~$ ".
 func (s *Shell) Prompt() string {
-	return s.host.Prompt(s.dir)
+	return s.host.Prompt(s.cwd.Path())
 }
 
 // Run reads and executes commands from the input, printing the prompt before each one,
@@ -131,26 +146,24 @@ func (s *Shell) Exit(code int) {
 	s.running = false
 }
 
-// resolve returns the absolute path of name: name itself when it starts with a slash,
-// otherwise name taken relative to the current directory.
-func (s *Shell) resolve(name string) string {
-	if strings.HasPrefix(name, vfs.Root) {
-		return name
-	}
-	return s.dir + vfs.Root + name
+// lookup returns the VFS node at name, taken relative to the current directory unless
+// it starts with a slash.
+func (s *Shell) lookup(name string) (*vfs.Node, error) {
+	return s.fsys.LookupFrom(s.cwd, name)
 }
 
 // executeFrom runs line like Execute, adding origin, such as "script: line 3",
-// to the error it reports. An empty origin adds nothing.
+// to the errors it reports. An empty origin adds nothing.
 func (s *Shell) executeFrom(origin, line string) int {
-	args, err := Parse(line)
+	s.origin = origin
+	args, err := Parse(line, s.host.Home)
 	if err != nil {
-		return s.report(origin, &ExitError{Status: StatusMisuse, Err: fmt.Errorf("syntax error: %w", err)})
+		return s.report(&ExitError{Status: StatusMisuse, Err: fmt.Errorf("syntax error: %w", err)})
 	}
 	if len(args) == 0 {
 		return s.status
 	}
-	return s.report(origin, s.dispatch(args[0], args[1:]))
+	return s.report(s.dispatch(args[0], args[1:]))
 }
 
 // dispatch runs the command called name with args. It wraps the command's error with
@@ -166,18 +179,23 @@ func (s *Shell) dispatch(name string, args []string) error {
 	return nil
 }
 
-// report stores the status that err stands for and returns it. A non-nil err is
-// printed to the error stream as "vshell: [origin: ]message".
-func (s *Shell) report(origin string, err error) int {
+// report stores the status that err stands for and returns it. A non-nil err is printed
+// by warn unless the command has already reported it.
+func (s *Shell) report(err error) int {
 	s.status = statusOf(err)
-	if err == nil {
-		return s.status
+	if err != nil && !errors.Is(err, errReported) {
+		s.warn(err)
 	}
-	if origin != "" {
-		err = fmt.Errorf("%s: %w", origin, err)
+	return s.status
+}
+
+// warn prints err to the error stream as "vshell: [origin: ]message". Commands that meet
+// several errors call it for each one and go on.
+func (s *Shell) warn(err error) {
+	if s.origin != "" {
+		err = fmt.Errorf("%s: %w", s.origin, err)
 	}
 	fmt.Fprintf(s.errOut, "%s: %v\n", Name, err)
-	return s.status
 }
 
 // stopReading ends a session whose input failed with err. End of input acts like exit
@@ -186,8 +204,9 @@ func (s *Shell) stopReading(err error) {
 	if !s.running {
 		return
 	}
+	s.origin = ""
 	if !errors.Is(err, io.EOF) {
-		s.report("", fmt.Errorf("read error: %w", err))
+		s.report(fmt.Errorf("read error: %w", err))
 	}
 	fmt.Fprintln(s.out, "exit")
 	s.Exit(s.status)

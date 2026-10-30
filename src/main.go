@@ -16,5 +16,6 @@ func main() {
 		Out:    os.Stdout,
 		ErrOut: os.Stderr,
 		Host:   shell.DetectHost(),
+		System: shell.DetectSystem(),
 	}))
 }

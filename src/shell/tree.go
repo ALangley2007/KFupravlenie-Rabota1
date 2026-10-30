@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	treeDefaultDir = "."
+	maxTreeArgs    = 1
 	treeBranch     = "├── "
 	treeLastBranch = "└── "
 	treeIndent     = "│   "
@@ -25,17 +25,18 @@ type treeCounts struct {
 
 // treeCommand implements the tree [path] utility: it prints path, the current directory
 // by default, and everything below it as an indented tree sorted by name, followed by
-// the number of directories and files shown, like the UNIX tree command. A file is
-// shown on its own. A missing path or one going through a file is an error.
+// the number of directories and files shown, like the UNIX tree command. Hidden entries,
+// whose names start with a dot, are left out, as tree does without -a. A file is shown
+// on its own. A missing path or one going through a file is an error.
 func treeCommand(s *Shell, args []string) error {
 	if len(args) > maxTreeArgs {
 		return ErrTooManyArguments
 	}
-	target := treeDefaultDir
+	target := currentDirName
 	if len(args) > 0 {
 		target = args[0]
 	}
-	node, err := s.fsys.Lookup(s.resolve(target))
+	node, err := s.lookup(target)
 	if err != nil {
 		return fmt.Errorf("%s: %w", target, err)
 	}
@@ -53,10 +54,16 @@ func treeCommand(s *Shell, args []string) error {
 	return err
 }
 
-// writeTree writes one line per entry below dir, each starting with prefix and a branch,
-// descends into subdirectories with a deeper prefix, and adds every entry to counts.
+// writeTree writes one line per visible entry below dir, each starting with prefix and
+// a branch, descends into subdirectories with a deeper prefix, and adds every entry
+// to counts.
 func writeTree(w *strings.Builder, dir *vfs.Node, prefix string, counts *treeCounts) {
-	children := dir.Children()
+	var children []*vfs.Node
+	for _, child := range dir.Children() {
+		if !strings.HasPrefix(child.Name(), hiddenPrefix) {
+			children = append(children, child)
+		}
+	}
 	for i, child := range children {
 		branch, indent := treeBranch, treeIndent
 		if i == len(children)-1 {

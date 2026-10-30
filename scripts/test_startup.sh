@@ -2,8 +2,8 @@
 
 . "$(dirname "$0")/lib.sh"
 
-section 'Comments, quoting and stub commands'
-vshell -vfs vfs/minimal.b64 -script scripts/startup/demo.vsh
+section 'Comments and quoting'
+vshell -vfs vfs/deep.b64 -script scripts/startup/demo.vsh
 
 section 'Errors are reported with the line number and the script goes on'
 vshell -vfs vfs/minimal.b64 -script scripts/startup/errors.vsh

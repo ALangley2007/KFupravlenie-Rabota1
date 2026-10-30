@@ -38,6 +38,7 @@ func (s *Shell) runScriptLine(origin, line string) {
 // the file is the normal way for a script to finish; other errors are reported.
 func (s *Shell) stopScript(name string, err error) {
 	if !errors.Is(err, io.EOF) {
-		s.report(name, fmt.Errorf("read error: %w", err))
+		s.origin = name
+		s.report(fmt.Errorf("read error: %w", err))
 	}
 }

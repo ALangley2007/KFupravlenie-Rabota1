@@ -4,7 +4,7 @@ foo --bar
 ls "unterminated
 ls trailing\
 exit 1 2
-ls still running
+ls
 // A non-numeric exit status ends the session with status 2, as in bash.
 exit abc
 ls never runs

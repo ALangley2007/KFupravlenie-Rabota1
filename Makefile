@@ -25,6 +25,7 @@ demo:
 	sh scripts/test_vfs_multi.sh
 	sh scripts/test_vfs_deep.sh
 	sh scripts/test_vfs_errors.sh
+	sh scripts/test_commands.sh
 
 clean:
 	rm -rf bin

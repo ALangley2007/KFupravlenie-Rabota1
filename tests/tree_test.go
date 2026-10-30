@@ -44,10 +44,14 @@ var treeErrorCases = []struct {
 	{"too many arguments", "tree docs empty", "vshell: tree: too many arguments\n"},
 }
 
-// newTreeSession returns a session over the test tree that starts in dir.
+// newTreeSession returns a session over the test tree that has changed to dir.
 func newTreeSession(t *testing.T, dir string) *session {
 	t.Helper()
-	return newFSSession("", decodeTree(t, testTree...), dir)
+	s := newFSSession("", decodeTree(t, testTree...))
+	if status := s.shell.Execute("cd " + dir); status != shell.StatusOK {
+		t.Fatalf("cd %s failed: %s", dir, s.errOut)
+	}
+	return s
 }
 
 // TestTree checks the tree listing for default, absolute and relative paths, files and
@@ -88,7 +92,7 @@ func TestTreeErrors(t *testing.T) {
 // TestDefaultFileSystem checks that a session without a file system works in an empty
 // one, starting at its root.
 func TestDefaultFileSystem(t *testing.T) {
-	s := newFSSession("", nil, "")
+	s := newFSSession("", nil)
 	if got, want := s.shell.Prompt(), "alice@wonderland:/$ "; got != want {
 		t.Errorf("Prompt() = %q, want %q", got, want)
 	}

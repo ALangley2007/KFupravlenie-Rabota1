@@ -20,9 +20,12 @@ tree /etc/motd/
 tree /etc/motd/..
 tree /etc /var
 
-// ls and cd are still stubs that print their arguments (stage 4 implements them).
-ls -l /home/guest
-cd "/home/guest/my projects"
+// tree follows the current directory, which cd changes (commands.vsh shows every
+// mode of ls and cd).
+cd /home/guest
+tree
+tree ..
+cd /
 
 // Errors from the earlier stages.
 foo --bar

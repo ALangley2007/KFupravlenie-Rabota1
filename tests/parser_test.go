@@ -40,6 +40,12 @@ var parseCases = []struct {
 	{"quoted double slash", `ls "// x" '//y'`, []string{"ls", "// x", "//y"}},
 	{"escaped double slash", `ls \//x`, []string{"ls", "//x"}},
 	{"single slashes", "ls / /a / b", []string{"ls", "/", "/a", "/", "b"}},
+	{"tilde alone", "cd ~", []string{"cd", "/home/alice"}},
+	{"tilde with a path", "cd ~/docs/x", []string{"cd", "/home/alice/docs/x"}},
+	{"tilde before a comment", "ls ~ // home", []string{"ls", "/home/alice"}},
+	{"quoted and escaped tildes", `ls "~" '~/x' \~ ~"/x"`, []string{"ls", "~", "~/x", "~", "~/x"}},
+	{"tilde inside a word", "ls a~ a/~", []string{"ls", "a~", "a/~"}},
+	{"tilde with a user name", "ls ~bob ~+", []string{"ls", "~bob", "~+"}},
 }
 
 var parseErrorCases = []struct {
@@ -58,7 +64,7 @@ var parseErrorCases = []struct {
 func TestParse(t *testing.T) {
 	for _, tc := range parseCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := shell.Parse(tc.line)
+			got, err := shell.Parse(tc.line, testHost.Home)
 			if err != nil {
 				t.Fatalf("Parse(%q) returned error: %v", tc.line, err)
 			}
@@ -73,7 +79,7 @@ func TestParse(t *testing.T) {
 func TestParseErrors(t *testing.T) {
 	for _, tc := range parseErrorCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := shell.Parse(tc.line)
+			got, err := shell.Parse(tc.line, testHost.Home)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Parse(%q) error = %v, want %v", tc.line, err, tc.want)
 			}
@@ -81,5 +87,13 @@ func TestParseErrors(t *testing.T) {
 				t.Errorf("Parse(%q) = %q, want no arguments", tc.line, got)
 			}
 		})
+	}
+}
+
+// TestParseWithoutHome checks that a tilde stays literal when no home directory is known.
+func TestParseWithoutHome(t *testing.T) {
+	got, err := shell.Parse("cd ~ ~/x", "")
+	if want := []string{"cd", "~", "~/x"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse() = %q, %v, want %q", got, err, want)
 	}
 }

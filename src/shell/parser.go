@@ -12,6 +12,8 @@ const (
 	doubleQuote = '"'
 	escapeChar  = '\\'
 	commentChar = '/'
+	tildeChar   = '~'
+	slashChar   = '/'
 )
 
 const escapableInDoubleQuotes = "\"\\$`"
@@ -26,6 +28,7 @@ var ErrTrailingEscape = errors.New("unexpected EOF after escape character")
 type lexer struct {
 	input   []rune
 	pos     int
+	home    string
 	args    []string
 	current strings.Builder
 	inToken bool
@@ -35,9 +38,10 @@ type lexer struct {
 // separate arguments, single quotes keep text literally, double quotes keep blanks and
 // allow escaping ", \, $ and `, and a backslash outside quotes escapes the next character.
 // A "//" at the start of a word begins a Go-style comment that runs to the end of the
-// line. Parse returns nil for a line with no arguments.
-func Parse(line string) ([]string, error) {
-	lx := &lexer{input: []rune(line)}
+// line. An unquoted "~" that forms a word or starts one followed by "/" is replaced by
+// home, unless home is empty. Parse returns nil for a line with no arguments.
+func Parse(line, home string) ([]string, error) {
+	lx := &lexer{input: []rune(line), home: home}
 	for !lx.done() {
 		if err := lx.step(); err != nil {
 			return nil, err
@@ -76,7 +80,7 @@ func (lx *lexer) flush() {
 }
 
 // step reads one character and acts on it: ends the argument on a blank, skips a comment,
-// reads a quoted or escaped part, or adds a plain character to the argument.
+// expands a tilde, reads a quoted or escaped part, or adds a plain character to the argument.
 func (lx *lexer) step() error {
 	char := lx.next()
 	switch {
@@ -84,6 +88,9 @@ func (lx *lexer) step() error {
 		lx.flush()
 	case lx.opensComment(char):
 		lx.pos = len(lx.input)
+	case lx.expandsTilde(char):
+		lx.current.WriteString(lx.home)
+		lx.inToken = true
 	case char == singleQuote:
 		return lx.readSingleQuoted()
 	case char == doubleQuote:
@@ -101,6 +108,16 @@ func (lx *lexer) step() error {
 // quoted or escaped slashes stay intact.
 func (lx *lexer) opensComment(char rune) bool {
 	return char == commentChar && !lx.inToken && !lx.done() && lx.input[lx.pos] == commentChar
+}
+
+// expandsTilde reports whether char, just read, is a tilde to replace by the home
+// directory: unquoted, at the start of a word and followed by "/", a blank or nothing,
+// as in bash. Other forms such as ~user or a quoted "~" stay literal.
+func (lx *lexer) expandsTilde(char rune) bool {
+	if char != tildeChar || lx.inToken || lx.home == "" {
+		return false
+	}
+	return lx.done() || lx.input[lx.pos] == slashChar || unicode.IsSpace(lx.input[lx.pos])
 }
 
 // readSingleQuoted reads up to the closing single quote, keeping every character as is.

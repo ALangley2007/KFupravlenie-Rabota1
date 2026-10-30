@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"vshell/src/vfs"
 )
@@ -18,6 +19,14 @@ import (
 type zipEntry struct {
 	name string
 	body string
+}
+
+// zipFile is an archive entry with the mode and modification time it stores; zero values
+// leave them out of the archive.
+type zipFile struct {
+	zipEntry
+	mode     fs.FileMode
+	modified time.Time
 }
 
 // testTree is a small archive with nested directories, an empty one, a binary file
@@ -33,15 +42,29 @@ var testTree = []zipEntry{
 // makeZip returns a ZIP archive holding entries in order.
 func makeZip(t *testing.T, entries ...zipEntry) []byte {
 	t.Helper()
+	files := make([]zipFile, len(entries))
+	for i, entry := range entries {
+		files[i] = zipFile{zipEntry: entry}
+	}
+	return makeZipFiles(t, files...)
+}
+
+// makeZipFiles returns a ZIP archive holding files in order, with their modes and times.
+func makeZipFiles(t *testing.T, files ...zipFile) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
-	for _, entry := range entries {
-		file, err := writer.Create(entry.name)
-		if err != nil {
-			t.Fatalf("creating %q: %v", entry.name, err)
+	for _, file := range files {
+		header := &zip.FileHeader{Name: file.name, Method: zip.Deflate, Modified: file.modified}
+		if file.mode != 0 {
+			header.SetMode(file.mode)
 		}
-		if _, err := file.Write([]byte(entry.body)); err != nil {
-			t.Fatalf("writing %q: %v", entry.name, err)
+		content, err := writer.CreateHeader(header)
+		if err != nil {
+			t.Fatalf("creating %q: %v", file.name, err)
+		}
+		if _, err := content.Write([]byte(file.body)); err != nil {
+			t.Fatalf("writing %q: %v", file.name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -53,7 +76,13 @@ func makeZip(t *testing.T, entries ...zipEntry) []byte {
 // decodeTree returns the file system built from a ZIP archive holding entries.
 func decodeTree(t *testing.T, entries ...zipEntry) *vfs.FS {
 	t.Helper()
-	fsys, err := vfs.Decode(makeZip(t, entries...))
+	return decodeArchive(t, makeZip(t, entries...))
+}
+
+// decodeArchive returns the file system built from archive.
+func decodeArchive(t *testing.T, archive []byte) *vfs.FS {
+	t.Helper()
+	fsys, err := vfs.Decode(archive)
 	if err != nil {
 		t.Fatalf("Decode() returned error: %v", err)
 	}
@@ -238,5 +267,91 @@ func TestLoad(t *testing.T) {
 	}
 	if _, err := vfs.Load(path + ".missing"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Load(missing) error = %v, want %v", err, fs.ErrNotExist)
+	}
+}
+
+// TestNodePaths checks the absolute path and parent of nodes, and lookups relative to a
+// directory.
+func TestNodePaths(t *testing.T) {
+	fsys := decodeTree(t, testTree...)
+	deep, _ := fsys.Lookup("docs/guides/deep")
+	if got, want := deep.Path(), "/docs/guides/deep"; got != want {
+		t.Errorf("Path() = %q, want %q", got, want)
+	}
+	if got := deep.Parent().Parent().Path(); got != "/docs" {
+		t.Errorf("Parent().Parent().Path() = %q, want /docs", got)
+	}
+	if root := fsys.Root(); root.Path() != vfs.Root || root.Parent() != root {
+		t.Errorf("Root() = %q with parent %q, want / as its own parent", root.Path(), root.Parent().Path())
+	}
+	cases := map[string]string{"": "/docs/guides/deep", "note.md": "/docs/guides/deep/note.md",
+		"../../readme.txt": "/docs/readme.txt", "/bin.dat": "/bin.dat", "../../../../..": "/"}
+	for name, want := range cases {
+		if node, err := fsys.LookupFrom(deep, name); err != nil || node.Path() != want {
+			t.Errorf("LookupFrom(deep, %q) = %v, %v, want %q", name, node, err, want)
+		}
+	}
+}
+
+// TestLinks checks the link counts: one for files, two plus subdirectories for directories.
+func TestLinks(t *testing.T) {
+	fsys := decodeTree(t, testTree...)
+	cases := map[string]int{"/": 4, "/docs": 3, "/empty": 2, "/bin.dat": 1}
+	for name, want := range cases {
+		if node, _ := fsys.Lookup(name); node.Links() != want {
+			t.Errorf("Lookup(%q).Links() = %d, want %d", name, node.Links(), want)
+		}
+	}
+}
+
+// TestModesAndTimes checks that entries keep their stored permissions and times, and that
+// implied directories get the default mode and the time of the entry that implies them.
+func TestModesAndTimes(t *testing.T) {
+	early := time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
+	late := time.Date(2021, time.June, 7, 8, 9, 10, 0, time.UTC)
+	fsys, err := vfs.Decode(makeZipFiles(t,
+		zipFile{zipEntry{"bin/", ""}, fs.ModeDir | 0o700, early},
+		zipFile{zipEntry{"bin/run", "x"}, 0o755, late},
+		zipFile{zipEntry{"implied/dir/file", ""}, 0o600, late},
+	))
+	if err != nil {
+		t.Fatalf("Decode() returned error: %v", err)
+	}
+	cases := []struct {
+		path string
+		mode fs.FileMode
+		time time.Time
+	}{
+		{"/bin", fs.ModeDir | 0o700, early},
+		{"/bin/run", 0o755, late},
+		{"/implied", vfs.DefaultDirMode, late},
+		{"/implied/dir/file", 0o600, late},
+	}
+	for _, tc := range cases {
+		node, _ := fsys.Lookup(tc.path)
+		if node.Mode() != tc.mode || !node.ModTime().Equal(tc.time) {
+			t.Errorf("Lookup(%q) = %v %v, want %v %v", tc.path, node.Mode(), node.ModTime(), tc.mode, tc.time)
+		}
+	}
+}
+
+// TestDOSTimeIsLocal checks that an entry with only an MS-DOS timestamp, which has no
+// time zone, is read as local time, as unzip does.
+func TestDOSTimeIsLocal(t *testing.T) {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	header := &zip.FileHeader{Name: "old.txt"}
+	header.ModifiedDate = 42<<9 | 7<<5 | 8
+	header.ModifiedTime = 9<<11 | 10<<5 | 6
+	if _, err := writer.CreateHeader(header); err != nil || writer.Close() != nil {
+		t.Fatalf("writing the archive: %v", err)
+	}
+	fsys, err := vfs.Decode(buf.Bytes())
+	if err != nil {
+		t.Fatalf("Decode() returned error: %v", err)
+	}
+	node, _ := fsys.Lookup("old.txt")
+	if want := time.Date(2022, time.July, 8, 9, 10, 12, 0, time.Local); !node.ModTime().Equal(want) {
+		t.Errorf("ModTime() = %v, want %v", node.ModTime(), want)
 	}
 }

@@ -31,7 +31,7 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
-// TestDetectHost checks that the real host data yields a non-empty user and host name.
+// TestDetectHost checks that the real host data yields a non-empty user, group and host name.
 func TestDetectHost(t *testing.T) {
 	host := shell.DetectHost()
 	if host.User == "" {
@@ -39,5 +39,18 @@ func TestDetectHost(t *testing.T) {
 	}
 	if host.Host == "" {
 		t.Error("DetectHost returned an empty host name")
+	}
+	if host.Group == "" {
+		t.Error("DetectHost returned an empty group name")
+	}
+}
+
+// TestDefaultHome checks the conventional home directories of users and the superuser.
+func TestDefaultHome(t *testing.T) {
+	if got := (shell.HostInfo{User: "bob"}).DefaultHome(); got != "/home/bob" {
+		t.Errorf("DefaultHome() = %q, want /home/bob", got)
+	}
+	if got := (shell.HostInfo{User: "root", Root: true}).DefaultHome(); got != "/root" {
+		t.Errorf("DefaultHome() for the superuser = %q, want /root", got)
 	}
 }

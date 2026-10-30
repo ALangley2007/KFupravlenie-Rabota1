@@ -1,10 +1,12 @@
-// Startup script demo: comments, quoting and the stub commands.
+// Startup script demo: comments and quoting, run against the deep VFS.
 // Comments use Go syntax: "//" starts a comment that runs to the end of the line.
 
+cd /home/guest
 ls
-ls -l "my dir" 'single quoted' escaped\ space
-cd "/usr/local/my folder"  // a trailing comment is ignored too
-cd a"b c"d "" 'it"s'
+ls "my documents" 'my documents' my\ documents   // three ways to keep a blank
+cd "my documents"  // a trailing comment is ignored too
+ls -l report.txt
+cd ..
 
 // "//" opens a comment only at the start of a word, so these stay arguments:
-ls a//b "// double" '// single' \//escaped
+ls /usr//bin/ls "// not a comment"

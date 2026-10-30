@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"time"
 )
 
 // maxDataSize limits how many bytes all files of an archive may unpack into memory.
@@ -48,9 +49,11 @@ func Load(path string) (*FS, error) {
 }
 
 // Decode builds a file system from data, which is either a ZIP archive or its base64
-// encoding; blanks and line breaks in base64 text are ignored. Directories missing from
-// the archive but implied by file paths are created. All file contents are read into
-// memory, at most 64 MiB in total.
+// encoding; blanks and line breaks in base64 text are ignored. Entries keep the
+// permissions and modification times stored in the archive. Directories missing from
+// the archive but implied by file paths are created with the default mode and the time
+// of the entry that implies them. All file contents are read into memory, at most
+// 64 MiB in total.
 func Decode(data []byte) (*FS, error) {
 	archive, err := unwrapBase64(data)
 	if err != nil {
@@ -99,7 +102,7 @@ func isZip(data []byte) bool {
 // The entry name must be a relative slash-separated path without "." or ".." elements.
 func (ld *loader) add(file *zip.File) error {
 	name := strings.TrimSuffix(file.Name, separator)
-	if name == current {
+	if name == currentDir {
 		return nil
 	}
 	if !fs.ValidPath(name) {
@@ -107,10 +110,10 @@ func (ld *loader) add(file *zip.File) error {
 	}
 	parts := strings.Split(name, separator)
 	if file.Mode().IsDir() {
-		_, err := mkdirAll(ld.fsys.root, parts)
-		return err
+		return ld.addDir(file, parts)
 	}
-	dir, err := mkdirAll(ld.fsys.root, parts[:len(parts)-1])
+	modTime := localTime(file.Modified)
+	dir, err := mkdirAll(ld.fsys.root, parts[:len(parts)-1], modTime)
 	if err != nil {
 		return err
 	}
@@ -122,8 +125,34 @@ func (ld *loader) add(file *zip.File) error {
 	if err != nil {
 		return err
 	}
-	dir.children[base] = &Node{name: base, data: data}
+	dir.children[base] = &Node{name: base, mode: file.Mode().Perm(), modTime: modTime, data: data, parent: dir}
 	return nil
+}
+
+// addDir creates the directory entry file at the path in parts, or gives an already
+// implied one the permissions and time the entry stores.
+func (ld *loader) addDir(file *zip.File, parts []string) error {
+	modTime := localTime(file.Modified)
+	dir, err := mkdirAll(ld.fsys.root, parts, modTime)
+	if err != nil {
+		return err
+	}
+	dir.mode = fs.ModeDir | file.Mode().Perm()
+	dir.modTime = modTime
+	return nil
+}
+
+// localTime returns the modification time of an archive entry. An entry with only an
+// MS-DOS timestamp stores the creator's wall clock without a time zone, which
+// archive/zip returns as UTC; like unzip, it is taken as local time instead. Times with
+// a zone, from the extended timestamp field, are kept.
+func localTime(modified time.Time) time.Time {
+	if modified.Location() != time.UTC {
+		return modified
+	}
+	year, month, day := modified.Date()
+	hour, minute, second := modified.Clock()
+	return time.Date(year, month, day, hour, minute, second, 0, time.Local)
 }
 
 // read returns the unpacked content of file and takes its size from the loader's budget.
@@ -145,12 +174,12 @@ func (ld *loader) read(file *zip.File) ([]byte, error) {
 }
 
 // mkdirAll returns the directory reached from dir through the names in parts, creating
-// the missing ones. It fails with ErrNotDir when one of the names is a file.
-func mkdirAll(dir *Node, parts []string) (*Node, error) {
+// the missing ones with modTime. It fails with ErrNotDir when one of the names is a file.
+func mkdirAll(dir *Node, parts []string, modTime time.Time) (*Node, error) {
 	for _, part := range parts {
 		child, ok := dir.children[part]
 		if !ok {
-			child = newDir(part)
+			child = newDir(part, dir, modTime)
 			dir.children[part] = child
 		}
 		if !child.IsDir() {

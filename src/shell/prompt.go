@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 )
 
@@ -14,37 +13,54 @@ const (
 	userPromptSign      = "$"
 	rootPromptSign      = "#"
 	rootUID             = "0"
+	rootHome            = "/root"
+	homesDir            = "/home/"
 	fallbackUser        = "user"
 	fallbackHost        = "localhost"
 	hostDomainSeparator = "."
 	userDomainSeparator = `\`
 )
 
-// HostInfo describes the host machine data shown in the prompt.
+// HostInfo describes the user and the host machine the session belongs to.
 type HostInfo struct {
-	User string
-	Host string
+	User  string
+	Group string
+	Host  string
+	// Home is the user's home directory inside the VFS; empty selects the conventional
+	// one, see DefaultHome.
 	Home string
 	Root bool
 }
 
-// DetectHost reads the current user, home directory and host name from the real OS.
-// Values that cannot be read fall back to "user" and "localhost"; the host name is
-// cut at the first dot and a Windows DOMAIN\user name is reduced to the user part.
+// DetectHost reads the current user, their primary group and the host name from the real
+// OS. Values that cannot be read fall back to "user" and "localhost", and the group to the
+// user name; the host name is cut at the first dot and a Windows DOMAIN\user name is
+// reduced to the user part. Home is left empty, since the session lives in the VFS.
 func DetectHost() HostInfo {
 	info := HostInfo{User: fallbackUser, Host: fallbackHost}
 	if current, err := user.Current(); err == nil {
 		info.User = shortUserName(current.Username)
-		info.Home = filepath.ToSlash(current.HomeDir)
 		info.Root = current.Uid == rootUID
-	}
-	if home, err := os.UserHomeDir(); err == nil && info.Home == "" {
-		info.Home = filepath.ToSlash(home)
+		if group, err := user.LookupGroupId(current.Gid); err == nil {
+			info.Group = group.Name
+		}
 	}
 	if host, err := os.Hostname(); err == nil && host != "" {
 		info.Host = shortHostName(host)
 	}
+	if info.Group == "" {
+		info.Group = info.User
+	}
 	return info
+}
+
+// DefaultHome returns the conventional home directory of the user on a UNIX system:
+// /root for the superuser and /home/<user> for everyone else.
+func (h HostInfo) DefaultHome() string {
+	if h.Root {
+		return rootHome
+	}
+	return homesDir + h.User
 }
 
 // Prompt returns the prompt for dir in the form "user@host:dir$ ", with "#" for root.

@@ -39,7 +39,7 @@ var scriptCases = []struct {
 func TestRunScript(t *testing.T) {
 	for _, tc := range scriptCases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newSession("")
+			s := newSession(t, "")
 			if got := s.shell.RunScript(testScript, strings.NewReader(tc.script)); got != tc.wantStatus {
 				t.Errorf("RunScript(%q) = %d, want %d", tc.script, got, tc.wantStatus)
 			}
@@ -53,10 +53,10 @@ func TestRunScript(t *testing.T) {
 // TestRunScriptEcho checks that every script line, comments and blank lines included,
 // is printed after the prompt before its output, as if the user typed it.
 func TestRunScriptEcho(t *testing.T) {
-	s := newSession("")
+	s := newSession(t, "")
 	s.shell.RunScript(testScript, strings.NewReader("// setup\n\nls \"a b\" // list\n"))
 	wantOut := testPrompt + "// setup\n" + testPrompt + "\n" +
-		testPrompt + "ls \"a b\" // list\n" + "ls args: [\"a b\"]\n"
+		testPrompt + "ls \"a b\" // list\n" + "a b\n"
 	if got := s.out.String(); got != wantOut {
 		t.Errorf("output = %q, want %q", got, wantOut)
 	}
@@ -66,7 +66,7 @@ func TestRunScriptEcho(t *testing.T) {
 // and the interactive input are never run, and Run returns the exit status at once.
 func TestRunScriptExit(t *testing.T) {
 	const wantStatus = 3
-	s := newSession("ls typed\n")
+	s := newSession(t, "ls typed\n")
 	s.shell.RunScript(testScript, strings.NewReader("exit 3\nls skipped\n"))
 	if got := s.shell.Run(); got != wantStatus {
 		t.Errorf("Run() = %d, want %d", got, wantStatus)
@@ -76,15 +76,17 @@ func TestRunScriptExit(t *testing.T) {
 	}
 }
 
-// TestRunScriptThenInteractive checks that the interactive session follows the script,
-// keeps its last status and reports its own errors without a script location.
+// TestRunScriptThenInteractive checks that the interactive session follows the script in
+// the directory the script left, keeps its last status and reports its own errors
+// without a script location.
 func TestRunScriptThenInteractive(t *testing.T) {
-	s := newSession("foo\nexit\n")
-	s.shell.RunScript(testScript, strings.NewReader("ls script\n"))
+	s := newSession(t, "foo\nexit\n")
+	s.shell.RunScript(testScript, strings.NewReader("cd \"my dir\"\n"))
 	if got := s.shell.Run(); got != shell.StatusNotFound {
 		t.Errorf("Run() = %d, want %d", got, shell.StatusNotFound)
 	}
-	wantOut := testPrompt + "ls script\n" + "ls args: [\"script\"]\n" + testPrompt + testPrompt
+	dirPrompt := "alice@wonderland:~/my dir$ "
+	wantOut := testPrompt + "cd \"my dir\"\n" + dirPrompt + dirPrompt
 	if got := s.out.String(); got != wantOut {
 		t.Errorf("output = %q, want %q", got, wantOut)
 	}
@@ -96,15 +98,15 @@ func TestRunScriptThenInteractive(t *testing.T) {
 // TestRunScriptReadError checks that a failing script reader is reported under the script
 // name after the lines read before the failure have run.
 func TestRunScriptReadError(t *testing.T) {
-	s := newSession("")
-	script := io.MultiReader(strings.NewReader("ls\n"), iotest.ErrReader(errors.New("disk failure")))
+	s := newSession(t, "")
+	script := io.MultiReader(strings.NewReader("ls notes.txt\n"), iotest.ErrReader(errors.New("disk failure")))
 	if got := s.shell.RunScript(testScript, script); got != shell.StatusError {
 		t.Errorf("RunScript() = %d, want %d", got, shell.StatusError)
 	}
 	if got, want := s.errOut.String(), "vshell: init.vsh: read error: disk failure\n"; got != want {
 		t.Errorf("errors = %q, want %q", got, want)
 	}
-	if got := s.out.String(); !strings.Contains(got, "ls args: []") {
+	if got := s.out.String(); !strings.HasSuffix(got, "ls notes.txt\nnotes.txt\n") {
 		t.Errorf("output = %q, want the ls output", got)
 	}
 }

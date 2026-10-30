@@ -7,8 +7,9 @@ import (
 )
 
 const (
+	currentDirName = "."
+	parentDirName  = ".."
 	maxExitArgs    = 1
-	maxTreeArgs    = 1
 	exitStatusMask = 0xFF
 )
 
@@ -24,18 +25,12 @@ type Command func(s *Shell, args []string) error
 // builtins returns the table of built-in commands keyed by name.
 func builtins() map[string]Command {
 	return map[string]Command{
-		"ls":   stub("ls"),
-		"cd":   stub("cd"),
-		"exit": exitCommand,
-		"tree": treeCommand,
-	}
-}
-
-// stub returns a placeholder command that only prints its name and arguments.
-func stub(name string) Command {
-	return func(s *Shell, args []string) error {
-		_, err := fmt.Fprintf(s.out, "%s args: %q\n", name, args)
-		return err
+		"cd":    cdCommand,
+		"clear": clearCommand,
+		"exit":  exitCommand,
+		"ls":    lsCommand,
+		"tree":  treeCommand,
+		"uname": unameCommand,
 	}
 }
 
