@@ -29,6 +29,7 @@ func builtins() map[string]Command {
 		"clear": clearCommand,
 		"exit":  exitCommand,
 		"ls":    lsCommand,
+		"mv":    mvCommand,
 		"tree":  treeCommand,
 		"uname": unameCommand,
 	}

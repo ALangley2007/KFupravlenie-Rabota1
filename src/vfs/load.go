@@ -19,7 +19,8 @@ const maxDataSize = 64 << 20
 // ErrNotArchive is returned for data that is neither a ZIP archive nor its base64 encoding.
 var ErrNotArchive = errors.New("not a ZIP archive")
 
-// ErrBadName is returned for an archive entry whose name is not a plain relative path.
+// ErrBadName is returned for an archive entry whose name is not a plain relative path,
+// and by Rename for a name that is empty, "." or "..", or holds a slash.
 var ErrBadName = errors.New("invalid name")
 
 // ErrExist is returned for an archive entry that names an already loaded file.

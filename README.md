@@ -2,11 +2,12 @@
 
 Эмулятор командной оболочки UNIX-подобной ОС, написанный на Go.
 
-Текущее состояние: **Этап 4 — Основные команды**. Эмулятор загружает виртуальную файловую
-систему из ZIP-архива (обычного или закодированного в base64) и работает с ней только в памяти.
-`ls` и `cd` работают с VFS так же, как GNU `ls` и встроенная `cd` bash; `uname` выводит данные
-реальной хостовой ОС, `clear` очищает экран. Параметры командной строки задают путь к VFS и к
-стартовому скрипту; при запуске они выводятся для отладки.
+Текущее состояние: **Этап 5 — Дополнительные команды**. Эмулятор загружает виртуальную
+файловую систему из ZIP-архива (обычного или закодированного в base64) и работает с ней только
+в памяти. `ls` и `cd` работают с VFS так же, как GNU `ls` и встроенная `cd` bash; `mv`
+переименовывает и перемещает файлы и директории, меняя VFS строго в памяти; `uname` выводит
+данные реальной хостовой ОС, `clear` очищает экран. Параметры командной строки задают путь к
+VFS и к стартовому скрипту; при запуске они выводятся для отладки.
 
 ## Требования
 
@@ -34,6 +35,7 @@ src/app/app.go           запуск эмулятора: параметры, о
 src/config/options.go    разбор параметров командной строки и их отладочный вывод
 src/vfs/vfs.go           дерево VFS в памяти: узлы, пути, права, время изменения
 src/vfs/load.go          загрузка VFS из ZIP-архива или его base64-кодировки
+src/vfs/rename.go        перемещение узлов VFS в памяти по правилам rename(2)
 src/shell/parser.go      парсер командной строки (кавычки, экранирование, комментарии, ~)
 src/shell/prompt.go      данные пользователя и хоста, домашняя директория, приглашение
 src/shell/system*.go     данные хостовой ОС для uname (sysctl, /proc, запасные значения)
@@ -41,6 +43,7 @@ src/shell/options.go     разбор однобуквенных опций ко
 src/shell/commands.go    реестр команд и exit
 src/shell/ls.go          ls
 src/shell/cd.go          cd
+src/shell/mv.go          mv
 src/shell/uname.go       uname и clear
 src/shell/tree.go        утилита tree
 src/shell/script.go      выполнение стартового скрипта
@@ -81,7 +84,9 @@ user@host:/$
   текстовые файлы `vfs/*.b64`, а эмулятор принимает как base64-текст (с переносами строк
   или без), так и обычный `.zip` — формат определяется по сигнатуре ZIP.
 * Архив читается с диска только один раз и целиком разбирается в дерево в памяти.
-  Ничего не распаковывается на диск и не изменяется; все дальнейшие операции идут в памяти.
+  Ничего не распаковывается на диск и не изменяется; все дальнейшие операции, в том числе
+  изменения VFS командой `mv`, идут только в памяти и пропадают при выходе. Скрипт
+  `scripts/test_mv.sh` проверяет по контрольной сумме, что файлы VFS на диске не меняются.
 * Записи сохраняют права доступа и время изменения из архива. Время в формате MS-DOS
   (без часового пояса) считается местным, как в `unzip`. Директории, которых нет в архиве
   явно, но которые следуют из путей файлов, создаются с правами `drwxr-xr-x` и временем
@@ -195,6 +200,7 @@ username@hostname:~/docs$
 | ----- | ----- |
 | `ls [-al] [path...]` | как GNU `ls`: содержимое директорий и имена файлов, по умолчанию текущая директория |
 | `cd [dir \| -]` | как `cd` в bash: смена текущей директории VFS |
+| `mv [-fnv] src dest`, `mv [-fnv] src... dir` | как GNU `mv`: переименование и перемещение в памяти |
 | `uname [-asnrvm]` | данные реальной хостовой ОС |
 | `clear [-x]` | очистка экрана терминала |
 | `tree [path]` | утилита: дерево директории, как UNIX `tree` |
@@ -231,6 +237,23 @@ username@hostname:~/docs$
 * `cd -` возвращается в предыдущую директорию и печатает ее путь.
 * Отсутствующий путь, файл, больше одного аргумента или опция (`cd -P`) — ошибка; текущая
   директория не меняется.
+
+#### mv
+
+* `mv src dest` переименовывает `src` в `dest`; если `dest` — существующая директория,
+  `src` перемещается в нее под своим именем. `mv src... dir` перемещает несколько источников
+  в директорию. Директории перемещаются вместе со всем содержимым.
+* Как в `rename(2)`, существующий файл заменяется файлом, а пустая директория — директорией.
+  Каталоги, из которых и в которые перемещена запись, получают текущее время изменения.
+* `-n` не заменяет существующие записи (такой источник молча пропускается), `-f` отменяет
+  предшествующий `-n`, `-v` печатает каждое перемещение: `renamed 'a' -> 'b'`.
+* Если перемещается директория, в которой находится текущая (или одна из ее родительских),
+  промпт показывает новый путь.
+* Ошибки сообщаются по каждому источнику в формате GNU `mv`, остальные источники все равно
+  перемещаются; любая ошибка дает статус 1. Нельзя переместить корень, `.` и `..`,
+  директорию в саму себя или ниже, файл сам на себя, файл на место директории и наоборот,
+  директорию на место непустой директории; при нескольких источниках цель должна быть
+  существующей директорией.
 
 #### uname
 
@@ -276,6 +299,17 @@ Darwin host.local 25.5.0 Darwin Kernel Version 25.5.0: ...; root:xnu-.../RELEASE
 | `cd -P` | `vshell: cd: -P: invalid option` | 2 |
 | `uname -x`, `clear -z` | `vshell: uname: invalid option -- 'x'` | 1 |
 | `uname now`, `clear now` | `vshell: uname: extra operand 'now'` | 1 |
+| `mv`, `mv a` | `vshell: mv: missing file operand`, `vshell: mv: missing destination file operand after 'a'` | 1 |
+| `mv nope x` | `vshell: mv: cannot stat 'nope': no such file or directory` | 1 |
+| `mv a nope/x` | `vshell: mv: cannot move 'a' to 'nope/x': no such file or directory` | 1 |
+| `mv d d` | `vshell: mv: cannot move 'd' to a subdirectory of itself, 'd/d'` | 1 |
+| `mv a .` | `vshell: mv: 'a' and './a' are the same file` | 1 |
+| `mv / x`, `mv . x` | `vshell: mv: cannot move '/' to 'x': device or resource busy` | 1 |
+| `mv d file` | `vshell: mv: cannot overwrite non-directory 'file' with directory 'd'` | 1 |
+| `mv file d` при `d/file` — директории | `vshell: mv: cannot overwrite directory 'd/file' with non-directory` | 1 |
+| `mv d /` при непустой `/d` | `vshell: mv: cannot move 'd' to '/d': directory not empty` | 1 |
+| `mv a b file` | `vshell: mv: target 'file' is not a directory` | 1 |
+| `mv -i`, `mv --force` | `vshell: mv: invalid option -- 'i'`, `vshell: mv: unrecognized option '--force'` | 1 |
 | `tree /nope` | `vshell: tree: /nope: no such file or directory` | 1 |
 | `tree a b` | `vshell: tree: too many arguments` | 1 |
 | ошибка в стартовом скрипте | `vshell: init.vsh: line 3: foo: command not found` (скрипт продолжается) | статус команды |
@@ -306,11 +340,12 @@ Darwin host.local 25.5.0 Darwin Kernel Version 25.5.0: ...; root:xnu-.../RELEASE
 | `scripts/test_vfs_deep.sh` | VFS с вложенностью до пяти уровней и стартовый скрипт `vfs.vsh` этапа 3 |
 | `scripts/test_vfs_errors.sh` | отсутствующий файл VFS, директория, пустой файл, не base64, base64 не архива, обрезанный ZIP |
 | `scripts/test_commands.sh` | все режимы `ls`, `cd`, `uname` и `clear` (`commands.vsh`), VFS с домашней директорией пользователя хоста, управляющие последовательности `clear` через `cat -v` |
+| `scripts/test_mv.sh` | все режимы `mv` (`mv.vsh`) на глубокой VFS, `mv` в двух других вариантах VFS, неизменность файлов VFS на диске после каждого запуска |
 
 Стартовые скрипты для них лежат в `scripts/startup/`: `hello.vsh`, `demo.vsh`, `errors.vsh`,
 `exit.vsh`, `tree.vsh`, `vfs.vsh` (этап 3), `commands.vsh` — сценарий этапа 4, проверяющий
-все режимы новых команд, операции с VFS и обработку ошибок, и `home.vsh` для VFS с домашней
-директорией.
+все режимы новых команд, операции с VFS и обработку ошибок, `home.vsh` для VFS с домашней
+директорией и `mv.vsh` — сценарий этапа 5 со всеми режимами `mv` и его ошибками.
 
 ## Демонстрационная сессия
 
@@ -342,6 +377,11 @@ user@host:/home/guest$ ls /nope /etc
 vshell: ls: cannot access '/nope': no such file or directory
 /etc:
 hostname  motd
+user@host:/home/guest$ mv -v notes.txt projects /tmp
+renamed 'notes.txt' -> '/tmp/notes.txt'
+renamed 'projects' -> '/tmp/projects'
+user@host:/home/guest$ mv /tmp/projects /tmp/projects/vshell
+vshell: mv: cannot move '/tmp/projects' to a subdirectory of itself, '/tmp/projects/vshell/projects'
 user@host:/home/guest$ cd
 vshell: cd: /home/user: no such file or directory
 user@host:/home/guest$ exit
